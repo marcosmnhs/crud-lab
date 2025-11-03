@@ -1,238 +1,260 @@
+import streamlit as st
 from sqlalchemy import create_engine, text
 from random import choice
 import string
+import pandas as pd
 
-# -----------------------------------------------------------------
-# ATENÇÃO: Insira suas credenciais do banco de dados aqui
-# -----------------------------------------------------------------
-DB_USER = "marcos"
-DB_PASSWORD = "senha123"
-DB_PORT = 5432
-DB_NAME = "bnbb"
-# -----------------------------------------------------------------
-
+# --- Configuração do Banco de Dados (Segura com st.secrets) ---
 
 try:
-    engine = create_engine(f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}@localhost:{DB_PORT}/{DB_NAME}")
-
-    with engine.connect() as conn:
-        pass
-    print("Conexão com o banco de dados bem-sucedida!")
-except Exception as e:
-    print(f"Erro ao conectar ao banco de dados: {e}")
-    print("Verifique suas credenciais (DB_USER, DB_PASSWORD, DB_NAME) no topo do script.")
-    exit()
-
-def menu():
-    print("""
-        1. INSERIR CLIENTES
-        2. EDITAR INFORMAÇÕES
-        3. CONSULTAR CLIENTES
-        4. EXCLUIR CLIENTES
-        5. SAIR
-            """)
-    try:
-        escolha = int(input("Escolha (1/2/3/4/5): "))
-        if escolha == 1:
-            insercao()
-        elif escolha == 2:
-            edicao()
-        elif escolha == 3:
-            consulta()
-        elif escolha == 4:
-            exclusao()
-        elif escolha == 5:
-            print("Encerrando o programa.")
-            return
-        else:
-            print("Valor não reconhecido. Tente novamente")
-    except ValueError:
-        print("Entrada inválida. Digite apenas números (1-5).")
-
-    menu()
-
-def insercao():
-    """
-    Função que insere um cliente na tabela cliente e uma conta bancaria na conta_bancaria.
-    """
-    cpf = input("Digite o CPF do cliente (apenas numeros): ")
-    if len(cpf) != 11 or not cpf.isdigit():
-        print("CPF inválido. Deve ser digitado 11 números.")
-        return
+    # Tenta carregar as credenciais do Streamlit Secrets
+    DB_USER = st.secrets["postgresql"]["user"]
+    DB_PASSWORD = st.secrets["postgresql"]["password"]
+    DB_HOST = st.secrets["postgresql"]["host"]
+    DB_PORT = st.secrets["postgresql"]["port"]
+    DB_NAME = st.secrets["postgresql"]["dbname"]
     
-    nome = input("Nome do cliente: ")
-    agencia = gera_sequencia(1)
-    
-    query_cliente = "INSERT INTO cliente (cpf, nome) VALUES (:cpf, :nome)"
-    query_conta = "INSERT INTO conta_bancaria (cpf_cliente, num_agencia, saldo) VALUES (:cpf, :agencia, 0)"
+    # URL de conexão
+    db_url = f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
+except KeyError:
+    # Se st.secrets não estiver configurado (ex: rodando localmente sem o arquivo)
+    st.error("Erro: Credenciais do banco de dados não configuradas no st.secrets.")
+    st.stop() # Para a execução do script
+
+@st.cache_resource
+def get_engine():
+    """Cria e armazena em cache o engine de conexão com o banco."""
     try:
+        engine = create_engine(db_url)
+        # Testa a conexão
         with engine.connect() as conn:
-            conn.execute(text(query_cliente), {"cpf": cpf, "nome": nome})
-            conn.execute(text(query_conta), {"cpf": cpf, "agencia": agencia})
-            conn.commit()
-            
-        print(f"Cliente {nome} e conta na agência {agencia} inseridos com sucesso!")
-        
+            pass
+        return engine
     except Exception as e:
-        print(f"\n--- Erro ao inserir ---")
-        print(f"Detalhe: {e}")
-        print("Possível causa: O CPF informado já existe no banco de dados.\n")
+        st.error(f"Não foi possível conectar ao banco de dados: {e}")
+        st.stop()
 
+engine = get_engine()
+
+# --- Funções Auxiliares (do seu código original) ---
 
 def gera_sequencia(tamanho):
     """
     Função que escolhe um número aleatório entre 1 e 2.
     """
     sequencia = ''
-    digitos = string.digits[1:3]
+    digitos = string.digits[1:3] # '1' ou '2'
     for i in range(tamanho):
         sequencia += str(choice(digitos))
     return sequencia
 
-def edicao():
-    """
-    Função que edita um número de telefone de um cliente.
-    """
-    print("VAMOS EDITAR O NÚMERO DE TELEFONE DO CLIENTE")
+# --- Páginas da Aplicação ---
 
-    cpf = input("CPF do cliente: ")
-    if len(cpf) != 11 or not cpf.isdigit():
-        print("CPF inválido.")
-        return
-
-    query_consulta = """
-            SELECT t.id, c.nome, t.ddd, t.numero
-            FROM cliente c
-            JOIN telefone t
-            ON c.cpf = t.cpf_cliente
-            WHERE c.cpf = :cpf;
-            """
+def page_inserir():
+    """Página para inserir um novo cliente e conta."""
+    st.subheader("Inserir Novo Cliente")
     
-    try:
-        with engine.connect() as conn:
-            
-            result = conn.execute(text(query_consulta), {"cpf": cpf})
-            telefones = result.fetchall() 
-            
-            if not telefones:
-                print("Nenhum telefone encontrado para este CPF.")
-                return
-
-            print("Telefones encontrados:")
-            for raw in telefones:
-                print(f"  ID: {raw.id}, Nome: {raw.nome}, Telefone: ({raw.ddd}) {raw.numero}")
-            
-            id = input("Digite o id do telefone que será alterado: ")
-            ddd_novo = input("Digite o novo ddd: ")
-            numero_novo = input("Digite o novo número: ")
-
-            query_update = """
-                UPDATE telefone
-                SET ddd = :ddd_novo, numero = :numero_novo
-                WHERE id = :id;
-                """
-
-            conn.execute(text(query_update), {"id": id, "ddd_novo": ddd_novo, "numero_novo": numero_novo})
-            conn.commit()
-            print("Telefone atualizado com sucesso!")
-            
-    except Exception as e:
-        print(f"\n--- Erro ao editar ---")
-        print(f"Detalhe: {e}\n")
-
-
-def consulta():
-    """
-    Função que nos mostra nome do cliente, agencia, conta e telefone.
-    """
-    cpf = input("Digite o CPF do cliente (ou deixe em branco para buscar todos): ")
-
-    params = {}
-    
-    query_base = """
-            SELECT c.nome, cb.num_agencia, cb.numero, t.ddd, t.numero
-            FROM cliente c
-            LEFT JOIN conta_bancaria cb ON c.cpf = cb.cpf_cliente
-            LEFT JOIN telefone t ON c.cpf = t.cpf_cliente
-            """
-            
-    if not cpf:
+    with st.form("form_insercao"):
+        cpf = st.text_input("CPF (apenas 11 números)", max_chars=11)
+        nome = st.text_input("Nome Completo")
         
-        query = text(query_base + ";")
-    
-    elif len(cpf) == 11 and cpf.isdigit():
-        query = text(query_base + " WHERE c.cpf = :cpf;")
-        params = {"cpf": cpf}
-        
-    else:
-        print("CPF inválido. Deve ter 11 números ou estar em branco.")
-        return
+        submitted = st.form_submit_button("Cadastrar Cliente")
 
-    try:
-        with engine.connect() as conn:
-            result = conn.execute(query, params)
+    if submitted:
+        if len(cpf) != 11 or not cpf.isdigit():
+            st.error("CPF inválido. Deve conter exatamente 11 números.")
+        elif not nome:
+            st.error("O nome não pode estar em branco.")
+        else:
+            try:
+                agencia = gera_sequencia(1)
+                
+                query = text("""
+                    INSERT INTO cliente (cpf, nome) VALUES (:cpf, :nome);
+                    INSERT INTO conta_bancaria (cpf_cliente, num_agencia, saldo) VALUES (:cpf, :agencia, 0);
+                """)
+                
+                with engine.connect() as conn:
+                    conn.execute(query, {"cpf": cpf, "nome": nome, "agencia": agencia})
+                    conn.commit()
+                
+                st.success(f"Cliente {nome} (CPF: {cpf}) e conta na agência {agencia} criados com sucesso!")
             
-            print("\n(Nome, Agência, Conta, DDD, Telefone)")
-            print("-" * 50)
+            except Exception as e:
+                st.error(f"Erro ao inserir no banco de dados: {e}")
+                st.warning("Possível causa: Este CPF já pode estar cadastrado.")
+
+def page_consultar():
+    """Página para consultar informações do cliente."""
+    st.subheader("Consultar Informações do Cliente")
+    
+    cpf = st.text_input("Digite o CPF (11 números) ou deixe em branco para buscar todos", max_chars=11)
+    
+    if st.button("Consultar"):
+        
+        params = {}
+        
+        if not cpf: 
+            st.info("Buscando todos os clientes...")
+            query = text("""
+                SELECT 
+                    c.nome AS "Nome", 
+                    cb.num_agencia AS "Agência", 
+                    cb.numero AS "Conta", 
+                    t.ddd AS "DDD", 
+                    t.numero AS "Telefone"
+                FROM cliente c
+                LEFT JOIN conta_bancaria cb ON c.cpf = cb.cpf_cliente
+                LEFT JOIN telefone t ON c.cpf = t.cpf_cliente;
+            """)
+
+        elif len(cpf) == 11 and cpf.isdigit():
+            query = text("""
+                SELECT 
+                    c.nome AS "Nome", 
+                    cb.num_agencia AS "Agência", 
+                    cb.numero AS "Conta", 
+                    t.ddd AS "DDD", 
+                    t.numero AS "Telefone"
+                FROM cliente c
+                LEFT JOIN conta_bancaria cb ON c.cpf = cb.cpf_cliente
+                LEFT JOIN telefone t ON c.cpf = t.cpf_cliente
+                WHERE c.cpf = :cpf;
+            """)
+            params = {"cpf": cpf} 
+
+        else:
+            st.error("CPF inválido. Deve conter 11 números ou estar totalmente em branco.")
+            st.stop() 
+
+        try:
+            with engine.connect() as conn:
+                
+                result = conn.execute(query, params) 
+                data = result.fetchall()
             
-            dados = result.fetchall()
-            if not dados:
-                print("Nenhum resultado encontrado.")
+            if data:
+                
+                df = pd.DataFrame(data, columns=result.keys())
+                st.dataframe(df)
             else:
-                for raw in dados:
-                    print(raw)
-            print("-" * 50)
+                st.warning("Nenhum registro encontrado.")
+        except Exception as e:
+            st.error(f"Erro ao consultar o banco de dados: {e}")
+
+def _buscar_telefones(cpf):
+    """Função interna para buscar telefones de um cliente."""
+    query_consulta = text("""
+        SELECT t.id, t.ddd, t.numero
+        FROM cliente c
+        JOIN telefone t ON c.cpf = t.cpf_cliente
+        WHERE c.cpf = :cpf;
+    """)
+    with engine.connect() as conn:
+        result = conn.execute(query_consulta, {"cpf": cpf})
+        return result.mappings().fetchall()
+
+def page_editar():
+    """Página para editar um número de telefone."""
+    st.subheader("Editar Telefone do Cliente")
+    
+    cpf = st.text_input("1. Digite o CPF do cliente", max_chars=11, key="cpf_editar")
+    
+    if len(cpf) == 11 and cpf.isdigit():
+        try:
+            telefones = _buscar_telefones(cpf)
             
-    except Exception as e:
-        print(f"\n--- Erro ao consultar ---")
-        print(f"Detalhe: {e}\n")
-
-
-def exclusao():
-    """
-    exclui um telefone do cliente
-    """
-    print("VAMOS EXCLUIR UM TELEFONE DO CLIENTE")
-    
-    cpf = input("Digite o CPF do cliente: ")
-    if len(cpf) != 11 or not cpf.isdigit():
-        print("CPF inválido.")
-        return
-
-    query_consulta = """
-            SELECT t.id, c.nome, t.ddd, t.numero
-            FROM cliente c
-            JOIN telefone t
-            ON c.cpf = t.cpf_cliente
-            WHERE c.cpf = :cpf;
-            """
-    
-    try:
-        with engine.connect() as conn:
-        
-            result = conn.execute(text(query_consulta), {"cpf": cpf})
-            telefones = result.fetchall()
-
             if not telefones:
-                print("Nenhum telefone encontrado para este CPF.")
+                st.info("Cliente não possui telefones cadastrados. (Você pode ter que adicionar a funcionalidade de 'Inserir Telefone' primeiro).")
                 return
 
-            print("Telefones encontrados:")
-            for raw in telefones:
-                print(f"  ID: {raw.id}, Nome: {raw.nome}, Telefone: ({raw.ddd}) {raw.numero}")
+            st.write("Telefones cadastrados:")
+            df_tel = pd.DataFrame(telefones)
+            st.dataframe(df_tel)
             
-            id = input("Insira o id do telefone que será excluído: ")
-
-            query_exclusao = "DELETE FROM telefone WHERE id = :id;"
-        
-            conn.execute(text(query_exclusao), {"id": id})
-            conn.commit()
-            print("Telefone excluído com sucesso!")
+            opcoes_tel = {t['id']: f"ID {t['id']}: ({t['ddd']}) {t['numero']}" for t in telefones}
             
-    except Exception as e:
-        print(f"\n--- Erro ao excluir ---")
-        print(f"Detalhe: {e}\n")
+            with st.form("form_edicao"):
+                st.write("2. Selecione o telefone e insira os novos dados:")
+                
+                id_tel = st.selectbox("Telefone para alterar", options=opcoes_tel.keys(), format_func=lambda x: opcoes_tel[x])
+                ddd_novo = st.text_input("Novo DDD", max_chars=2)
+                numero_novo = st.text_input("Novo Número", max_chars=9)
+                
+                submitted = st.form_submit_button("Atualizar Telefone")
 
-if __name__ == "__main__":
-    menu()
+            if submitted:
+                if ddd_novo.isdigit() and numero_novo.isdigit():
+                    query_update = text("UPDATE telefone SET ddd = :ddd_novo, numero = :numero_novo WHERE id = :id;")
+                    with engine.connect() as conn:
+                        conn.execute(query_update, {"id": id_tel, "ddd_novo": ddd_novo, "numero_novo": numero_novo})
+                        conn.commit()
+                    st.success(f"Telefone ID {id_tel} atualizado com sucesso!")
+                    # st.rerun() # Descomente se quiser que a página recarregue
+                else:
+                    st.error("DDD e Número devem conter apenas dígitos.")
+
+        except Exception as e:
+            st.error(f"Erro no processo de edição: {e}")
+
+def page_excluir():
+    """Página para excluir um número de telefone."""
+    st.subheader("Excluir Telefone do Cliente")
+    
+    cpf = st.text_input("1. Digite o CPF do cliente", max_chars=11, key="cpf_excluir")
+    
+    if len(cpf) == 11 and cpf.isdigit():
+        try:
+            telefones = _buscar_telefones(cpf)
+            
+            if not telefones:
+                st.info("Cliente não possui telefones cadastrados.")
+                return
+
+            st.write("Telefones cadastrados:")
+            df_tel = pd.DataFrame(telefones)
+            st.dataframe(df_tel)
+            
+            opcoes_tel = {t['id']: f"ID {t['id']}: ({t['ddd']}) {t['numero']}" for t in telefones}
+            
+            with st.form("form_exclusao"):
+                st.write("2. Selecione o telefone para excluir:")
+                id_tel = st.selectbox("Telefone para EXCLUIR", options=opcoes_tel.keys(), format_func=lambda x: opcoes_tel[x])
+                
+                confirmacao = st.checkbox(f"Sim, eu confirmo que desejo excluir o telefone ID {id_tel}.")
+                
+                submitted = st.form_submit_button("EXCLUIR")
+
+            if submitted:
+                if confirmacao:
+                    query_exclusao = text("DELETE FROM telefone WHERE id = :id;")
+                    with engine.connect() as conn:
+                        conn.execute(query_exclusao, {"id": id_tel})
+                        conn.commit()
+                    st.success(f"Telefone ID {id_tel} excluído com sucesso!")
+                else:
+                    st.warning("Você deve marcar a caixa de confirmação para excluir.")
+                    
+        except Exception as e:
+            st.error(f"Erro no processo de exclusão: {e}")
+
+# --- Menu Principal (Sidebar) ---
+
+st.set_page_config(page_title="Gestão Bancária", layout="wide")
+st.title("🏦 Sistema de Gerenciamento Bancário")
+
+# Opções do menu
+menu_opcoes = {
+    "Inserir Cliente": page_inserir,
+    "Consultar Cliente": page_consultar,
+    "Editar Telefone": page_editar,
+    "Excluir Telefone": page_excluir
+}
+
+# Cria o menu na barra lateral
+escolha = st.sidebar.radio("Selecione a Operação", menu_opcoes.keys())
+
+# Chama a função da página selecionada
+pagina_selecionada = menu_opcoes[escolha]
+pagina_selecionada()
