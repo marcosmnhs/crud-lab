@@ -85,6 +85,48 @@ def page_inserir():
                 st.error(f"Erro ao inserir no banco de dados: {e}")
                 st.warning("Possível causa: Este CPF já pode estar cadastrado.")
 
+def page_transacao():
+    """Página que realiza uma transação"""
+
+    opcoes_transacao = ['Débito', 'Crédito', 'Saque', 'Depósito', 'Transferência']
+
+    st.subheader("Faz uma transferência.")
+    
+    with st.form("form_insercao"):
+        num_conta = st.text_input("Numero da conta", max_chars=3)
+        valor = st.number_input("Valor (R$): ", min_value=0.01, max_value=10000.00)
+        tipo = st.selectbox(
+            label = "Tipo de transação:",
+            options=opcoes_transacao,
+            index=None,
+            placeholder="Selecione uma opção..."
+        )
+        
+        submitted = st.form_submit_button("Realizar transação")
+
+    if submitted:
+        if 0 < valor <= 10.000:
+            st.error("O valor deve um número maior que 0 e menor que 10.000,01.")
+        elif not num_conta:
+            st.error("O número da conta não pode estar em branco.")
+        elif tipo is None:
+            st.error("Preencha o tipo da transação.")
+        else:
+            try:                
+                query = text("""
+                    INSERT INTO transacao (num_conta, valor, tipo, data_hora) VALUES (:num_conta, :valor, :tipo, NOW());
+                """)
+                
+                with engine.connect() as conn:
+                    conn.execute(query, {"num_conta": num_conta, "valor": valor, "tipo": tipo})
+                    conn.commit()
+                
+                st.success(f"Transação de {tipo} no valor de {valor} e conta número {num_conta} realizada com sucesso!")
+            
+            except Exception as e:
+                st.error(f"Erro ao inserir no banco de dados: {e}")
+                st.warning("Possível causa: Este número de conta pode não existir.")
+
 def page_consultar():
     """Página para consultar informações do cliente."""
     st.subheader("Consultar Informações do Cliente")
@@ -249,7 +291,8 @@ menu_opcoes = {
     "Inserir Cliente": page_inserir,
     "Consultar Cliente": page_consultar,
     "Editar Telefone": page_editar,
-    "Excluir Telefone": page_excluir
+    "Excluir Telefone": page_excluir,
+    "Realizar Transação": page_transacao
 }
 
 # Cria o menu na barra lateral
